@@ -1,5 +1,6 @@
 import scala.collection.immutable.PagedSeq
-import com.codecommit.antixml._
+import com.codecommit.{antixml => ax}
+import ax._
 import java.io.StringReader
 import scala.util.parsing.combinator._
 import scala.collection.mutable.ListBuffer
@@ -52,7 +53,7 @@ class XMLParser extends RegexParsers {
     }
   }
 
-  lazy val content: Parser[List[Node]] = (charData ?) ~ ((contentPlaceHolder | element) ~ (charData ?) *) ^^ mkContent
+  lazy val content: Parser[List[Node]] = (charData ?) ~ ((contentPlaceHolder | (element ^^ {case e => List(e)})) ~ (charData ?) *) ^^ mkContent
 
   lazy val contentPlaceHolder = Parser { in =>
     placeHolder(in) match {
@@ -61,8 +62,9 @@ class XMLParser extends RegexParsers {
         val in1WithState = in1.asInstanceOf[ReaderWithState[Seq[Any]]]
         val passState = in1WithState.extraState
         val replacement = inWithState.extraState.head match {
-          case n: Node => n
-          case s => Text(s.toString)
+          case g: Group[Node] => g.toList
+          case n: Node => List(n)
+          case s => List(Text(s.toString))
         }
         Success(replacement, in1WithState.copy(extraState = passState.tail))
       }
@@ -110,29 +112,29 @@ class XMLParser extends RegexParsers {
 
   private type NonEmpty = String ~ Attributes ~ List[Node] ~ String
 
-  private def mkNonEmpty: NonEmpty => Parser[Node] = {
+  private def mkNonEmpty: NonEmpty => Parser[ax.Elem] = {
     case startName ~ atts ~ children ~ endName =>
       if (startName == endName)
-        success(Elem(None, startName, atts, Map(), Group(children: _*)))
+        success(ax.Elem(None, startName, atts, Map(), Group(children: _*)))
       else
         err("tag mismatch")
   }
 
-  private def mkEmpty: String ~ Attributes => Node = {
-    case elName ~ atts => Elem(elName, atts)
+  private def mkEmpty: String ~ Attributes => ax.Elem = {
+    case elName ~ atts => ax.Elem(elName, atts)
   }
 
-  private type Content = Option[Text] ~ List[Node ~ Option[Text]]
+  private type Content = Option[Text] ~ List[List[Node] ~ Option[Text]]
 
   private def mkContent: Content => List[Node] = {
     case Some(txt) ~ rest => txt :: unpackContent(rest)
     case None ~ rest => unpackContent(rest)
   }
 
-  private def unpackContent(contents: List[Node ~ Option[Text]]): List[Node] = {
+  private def unpackContent(contents: List[List[Node] ~ Option[Text]]): List[Node] = {
     val acc = new ListBuffer[Node]
-    for (node ~ chars <- contents) {
-      acc += node
+    for (nodes ~ chars <- contents) {
+      acc ++= nodes
       if (chars.isDefined) acc += chars.get
     }
     acc.toList
@@ -141,7 +143,7 @@ class XMLParser extends RegexParsers {
 
 object CombinatorDemo extends XMLParser {
   def main(args: Array[String]) {
-    val exprs = Seq(Attributes("a"->"data wins", "b" -> "data loses"), "one", Elem("hi", Attributes()))
+    val exprs = Seq(Attributes("a"->"data wins", "b" -> "data loses"), "one", ax.Elem("hi", Attributes()))
     val xml = """<foo a="overridden" \u0007 b="literal wins">blie <b attr=\u0007/> bla \u0007</foo>"""
     val reader = ReaderWithState(new PagedSeqReader(PagedSeq.fromReader(new StringReader(xml))), exprs)
     val doc = parseAll(document, reader)

@@ -12,19 +12,19 @@ class StateThreadingParser extends RegexParsers {
   lazy val group1 = f~m~f
   lazy val group2 = f~m
 
-	lazy val m: Parser[Person] = "M" ^^ { case _ => Male }
+  lazy val m: Parser[Person] = "M" ^^ { case _ => Male }
   lazy val f = gifted(rawF)
   lazy val rawF: Parser[Female] = "F" ^^ { case _ => Female(None) }
 
   lazy val gifted = (p: Parser[Female]) => Parser { in =>
     p(in) match {
-      case Success(f, in1) => {
+      case Success(female, in1) => {
         val inWithState = in.asInstanceOf[ReaderWithState[List[String]]]
         val in1WithState = in1.asInstanceOf[ReaderWithState[List[String]]]
         val passState = in1WithState.extraState
 
         println("handing out "+inWithState.extraState.headOption)
-        Success(f.copy(inWithState.extraState.headOption), in1WithState.copy(extraState = if (passState.isEmpty) passState else passState.tail))
+        Success(female.copy(inWithState.extraState.headOption), in1WithState.copy(extraState = if (passState.isEmpty) passState else passState.tail))
       }
       case ns: NoSuccess => ns
     }

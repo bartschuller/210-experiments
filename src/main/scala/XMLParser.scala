@@ -1,58 +1,109 @@
+import scala.collection.immutable.PagedSeq
 import com.codecommit.antixml._
-import java.io.{StringReader, FileReader}
+import java.io.StringReader
 import scala.util.parsing.combinator._
 import scala.collection.mutable.ListBuffer
+import scala.util.parsing.input.PagedSeqReader
 
 class XMLParser extends RegexParsers {
   override def skipWhitespace: Boolean = false
 
-  def placeHolder = "\u0007"
+  val placeHolder: Parser[String] = "\u0007"
 
-  def document = opt(declaration) ~> optSpace ~> element <~ optSpace
+  lazy val document = opt(declaration) ~> optSpace ~> element <~ optSpace
 
-  def declaration = "<?xml" ~ version ~ (encoding ?) ~ (standalone ?) ~ optSpace ~ "?>"
+  lazy val declaration = "<?xml" ~ version ~ (encoding ?) ~ (standalone ?) ~ optSpace ~ "?>"
 
-  def version = space ~ "version" ~ equals ~ string
+  lazy val version = space ~ "version" ~ equals ~ string
 
-  def encoding = space ~ "encoding" ~ equals ~ string
+  lazy val encoding = space ~ "encoding" ~ equals ~ string
 
-  def standalone = space ~ "standalone" ~ equals ~ (yes | no)
+  lazy val standalone = space ~ "standalone" ~ equals ~ (yes | no)
 
-  def element = nonEmpty | empty
+  lazy val element = nonEmpty | empty
 
-  def nonEmpty = startTag ~ content ~ endTag >> mkNonEmpty
+  lazy val nonEmpty = startTag ~ content ~ endTag >> mkNonEmpty
 
-  def empty = "<" ~> name ~ attributes <~ optSpace <~ "/>" ^^ mkEmpty
+  lazy val empty = "<" ~> name ~ attributes <~ optSpace <~ "/>" ^^ mkEmpty
 
-  def startTag = "<" ~> name ~ attributes <~ optSpace <~ ">"
+  lazy val startTag = "<" ~> name ~ attributes <~ optSpace <~ ">"
 
-  def endTag = "</" ~> name <~ optSpace <~ ">"
+  lazy val endTag = "</" ~> name <~ optSpace <~ ">"
 
-  def attributes = (space ~> attribute *) ^^ mkAttributes
+  lazy val attributes: Parser[Attributes] = ((space ~> attribute *) ^^ mkAttributes) ~
+                   opt(space ~> attributesPlaceHolder) ~
+                   ((space ~> attribute *) ^^ mkAttributes) ^^ {
+    case first ~ optInterpolated ~ last => Attributes((first ++ optInterpolated.getOrElse(Attributes.empty) ++ last).toSeq:_*)
+  }
 
-  def content: Parser[List[Node]] = (charData ?) ~ (element ~ (charData ?) *) ^^ mkContent
+  lazy val attributesPlaceHolder = Parser { in =>
+    placeHolder(in) match {
+      case Success(_, in1) => {
+        val inWithState = in.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val in1WithState = in1.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val passState = in1WithState.extraState
+        val replacement = inWithState.extraState.head match {
+          case a: Attributes => a
+          case m: Map[QName, String] => Attributes(m.toSeq:_*)
+        }
+        Success(replacement, in1WithState.copy(extraState = passState.tail))
+      }
+      case ns: NoSuccess => ns
+    }
+  }
 
-  def attribute = (name <~ equals) ~ (placeHolder | string)
+  lazy val content: Parser[List[Node]] = (charData ?) ~ ((contentPlaceHolder | element) ~ (charData ?) *) ^^ mkContent
 
-  def equals = optSpace ~ "=" ~ optSpace
+  lazy val contentPlaceHolder = Parser { in =>
+    placeHolder(in) match {
+      case Success(_, in1) => {
+        val inWithState = in.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val in1WithState = in1.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val passState = in1WithState.extraState
+        val replacement = inWithState.extraState.head match {
+          case n: Node => n
+          case s => Text(s.toString)
+        }
+        Success(replacement, in1WithState.copy(extraState = passState.tail))
+      }
+      case ns: NoSuccess => ns
+    }
+  }
 
-  def string = doubleString | singleString
+  lazy val attribute = (name <~ equals) ~ (stringPlaceHolder | string)
 
-  def optSpace = space ?
+  lazy val stringPlaceHolder = Parser { in =>
+    placeHolder(in) match {
+      case Success(_, in1) => {
+        val inWithState = in.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val in1WithState = in1.asInstanceOf[ReaderWithState[Seq[Any]]]
+        val passState = in1WithState.extraState
 
-  def charData = "[^<]+".r ^^ Text
+        Success(inWithState.extraState.head.toString, in1WithState.copy(extraState = passState.tail))
+      }
+      case ns: NoSuccess => ns
+    }
+  }
 
-  def space = """\s+""".r
+  lazy val equals = optSpace ~ "=" ~ optSpace
 
-  def name = """(:|\w)((\-|\.|\d|:|\w))*""".r
+  lazy val string = doubleString | singleString
 
-  def doubleString = "\"" ~> """[^"]*""".r <~ "\""
+  lazy val optSpace = opt(space)
 
-  def singleString = "'" ~> "[^']*".r <~ "'"
+  val charData = "[^<\u0007]+".r ^^ Text
 
-  def yes = "\"yes\"" | "'yes'"
+  val space = """\s+""".r
 
-  def no = "\"no\"" | "'no'"
+  val name: Parser[String] = """(:|\w)((\-|\.|\d|:|\w))*""".r
+
+  val doubleString: Parser[String] = "\"" ~> """[^"]*""".r <~ "\""
+
+  val singleString: Parser[String] = "'" ~> "[^']*".r <~ "'"
+
+  val yes: Parser[String] = "\"yes\"" | "'yes'"
+
+  val no: Parser[String] = "\"no\"" | "'no'"
 
   private def mkAttributes = (list: List[String ~ String]) =>
     Attributes(list.map{case a~b => (QName(None, a), b)}:_*)
@@ -68,7 +119,7 @@ class XMLParser extends RegexParsers {
   }
 
   private def mkEmpty: String ~ Attributes => Node = {
-    case name ~ atts => Elem(name, atts)
+    case elName ~ atts => Elem(elName, atts)
   }
 
   private type Content = Option[Text] ~ List[Node ~ Option[Text]]
@@ -90,8 +141,9 @@ class XMLParser extends RegexParsers {
 
 object CombinatorDemo extends XMLParser {
   def main(args: Array[String]) {
-    val exprs = Seq("one", "two")
-    val reader = new StringReader("""<foo a="b">blie <b attr=\u0007/> bla \u0007</foo>""")
+    val exprs = Seq(Attributes("a"->"data wins", "b" -> "data loses"), "one", Elem("hi", Attributes()))
+    val xml = """<foo a="overridden" \u0007 b="literal wins">blie <b attr=\u0007/> bla \u0007</foo>"""
+    val reader = ReaderWithState(new PagedSeqReader(PagedSeq.fromReader(new StringReader(xml))), exprs)
     val doc = parseAll(document, reader)
     doc match {
       case Success(result, _) => println(result)

@@ -26,8 +26,8 @@ object AX {
   def main(args: Array[String]) {
     val attributes = Attributes("a"->"data wins", "b" -> "data loses")
     val attributeValue = "one"
-    val node = Group(Elem("hi", Attributes()), Text(" there"))
-    val xml = xml"""<foo a="overridden" $attributes b="literal wins">blie <b attr=$attributeValue/> bla $node</foo>"""
+    val nodes = Group(Elem("hi", Attributes()), Text(" there"))
+    val xml = xml"""<foo a="overridden" $attributes b="literal wins">blie <b attr=$attributeValue/> bla $nodes</foo>"""
     println(xml)
   }
 }

@@ -1,12 +1,12 @@
 import sbt._
 import Keys._
 
-object build extends Build {
+object Build extends Build {
   val sharedSettings = Defaults.defaultSettings ++ Seq(
     organization := "org.smop.experiments",
     version := "0.1.0-SNAPSHOT",
     scalaVersion := "2.10.0-M3",
-    scalacOptions += "-unchecked"
+    scalacOptions ++= Seq("-unchecked", "-Ymacro-debug-lite")
   )
 
   lazy val macros = Project(id = "macros", base = file("macros"), settings = sharedSettings ++ Seq(name := "macros"))

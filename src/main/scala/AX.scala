@@ -27,7 +27,23 @@ object AX {
     val attributes = Attributes("a"->"data wins", "b" -> "data loses")
     val attributeValue = "one"
     val nodes = Group(Elem("hi", Attributes()), Text(" there"))
-    val xml = xml"""<foo a="overridden" $attributes b="literal wins">blie <b attr=$attributeValue/> bla $nodes</foo>"""
+
+    val xml = xml"""<foo a="overridden" $attributes b="literal wins">
+blie <b attr=$attributeValue/> bla $nodes
+${
+  val inner = xml"""<bar/>"""
+  xml"""<baz>$inner</baz>"""
+}
+</foo>"""
+
     println(xml)
+/*
+
+<foo a="data wins" b="literal wins">
+  blie <b attr="one"/> bla <hi/> there
+  <baz><bar/></baz>
+</foo>
+
+*/
   }
 }
